@@ -1,14 +1,12 @@
-use crate::types::client::ClientId;
 use crate::types::{
-    client::{ClientTx, Clients},
+    client::{ClientId, ClientTx, Clients},
     error::Result,
 };
 use crossbeam_channel::{Receiver, Sender, bounded};
-use dashmap::DashMap;
-use std::{sync::Arc, thread::JoinHandle};
+use std::{collections::HashMap, thread::JoinHandle};
 
 pub struct TxEngine {
-    handles: Vec<JoinHandle<()>>,
+    handles: Vec<JoinHandle<Clients>>,
     senders: Vec<Sender<Message>>,
     clients: Clients,
 }
@@ -22,7 +20,7 @@ impl TxEngine {
         TxEngine {
             handles: vec![],
             senders: vec![],
-            clients: Clients(Arc::new(DashMap::new())),
+            clients: Clients(HashMap::new()),
         }
     }
 
@@ -31,13 +29,13 @@ impl TxEngine {
 
         if num_threads > 1 {
             let mut senders = Vec::<Sender<Message>>::with_capacity(num_threads);
-            let mut handles = Vec::<JoinHandle<()>>::with_capacity(num_threads);
-            let clients = Clients(Arc::new(DashMap::new()));
+            let mut handles = Vec::<JoinHandle<Clients>>::with_capacity(num_threads);
+            let clients = Clients(HashMap::new());
 
             for _ in 0..num_threads {
                 let (tx, rx) = bounded::<Message>(1024);
                 senders.push(tx);
-                handles.push(Self::spawn_worker(clients.clone(), rx));
+                handles.push(Self::spawn_worker(rx));
             }
 
             TxEngine {
@@ -50,7 +48,7 @@ impl TxEngine {
         }
     }
 
-    pub fn process(&self, txs: Vec<ClientTx>) -> Result<()> {
+    pub fn process(&mut self, txs: Vec<ClientTx>) -> Result<()> {
         if txs.is_empty() {
             return Ok(());
         };
@@ -75,23 +73,32 @@ impl TxEngine {
         (client_id as usize) % num_shards
     }
 
-    fn spawn_worker(clients: Clients, rx: Receiver<Message>) -> JoinHandle<()> {
+    fn spawn_worker(rx: Receiver<Message>) -> JoinHandle<Clients> {
         std::thread::spawn(move || {
-            while let Ok(msg) = rx.recv() {
-                match msg {
-                    Message::Process(tx) => clients.process_tx(tx),
-                    Message::Shutdown => break,
+            let mut clients = Clients(HashMap::new());
+            loop {
+                match rx.recv() {
+                    Ok(Message::Process(tx)) => clients.process_tx(tx),
+                    Ok(Message::Shutdown) => break,
+                    Err(_) => break,
                 }
             }
+            clients
         })
     }
 
-    pub fn flush(self) -> Result<Box<Clients>> {
+    pub fn flush(mut self) -> Result<Box<Clients>> {
         for sender in self.senders {
             let _ = sender.send(Message::Shutdown);
         }
+
         for handle in self.handles {
-            let _ = handle.join();
+            match handle.join() {
+                Ok(batch) => self.clients.0.extend(batch.0),
+                Err(_) => {
+                    // TODO: log error
+                }
+            }
         }
         Ok(Box::new(self.clients))
     }

@@ -14,7 +14,7 @@ pub fn process_csv_file<W: std::io::Write>(file_path: &str, wrt: W) -> Result<()
 }
 
 fn process_csv_file_multi_thread<W: std::io::Write>(file_path: &str, wrt: W) -> Result<()> {
-    let engine = TxEngine::multi_threaded();
+    let mut engine = TxEngine::multi_threaded();
 
     let mut reader = csv_buf_reader_for_file(file_path)?;
 
@@ -36,7 +36,7 @@ fn process_csv_file_multi_thread<W: std::io::Write>(file_path: &str, wrt: W) -> 
 }
 
 fn process_csv_file_single_thread<W: std::io::Write>(file_path: &str, wrt: W) -> Result<()> {
-    let engine = TxEngine::single_threaded();
+    let mut engine = TxEngine::single_threaded();
 
     let txs = read_csv_from_file(file_path)?;
 

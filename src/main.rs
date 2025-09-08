@@ -14,8 +14,12 @@ fn main() {
 
     let file_path = &args[1];
 
+    let start = std::time::SystemTime::now();
     match process_csv_file(file_path, std::io::stdout()) {
-        Ok(_) => {}
+        Ok(_) => {
+            let end = std::time::SystemTime::now();
+            println!("elapsed: {:?}", end.duration_since(start));
+        }
         Err(e) => {
             println!("error: {}", e);
             exit(1);

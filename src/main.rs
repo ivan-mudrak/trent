@@ -9,15 +9,19 @@ fn main() {
     let args = env::args().collect::<Vec<String>>();
 
     if args.len() < 2 {
-        println!("no input CSV file");
+        eprintln!("no input CSV file");
     }
 
     let file_path = &args[1];
 
+    let start = std::time::SystemTime::now();
     match process_csv_file(file_path, std::io::stdout()) {
-        Ok(_) => {}
+        Ok(_) => {
+            let end = std::time::SystemTime::now();
+            eprintln!("elapsed: {:?}", end.duration_since(start));
+        }
         Err(e) => {
-            println!("error: {}", e);
+            eprintln!("error: {}", e);
             exit(1);
         }
     }

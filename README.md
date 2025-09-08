@@ -10,12 +10,9 @@
 
 #### Account
 
-Main type keeping single *AccountState* under thread safe Arc<Mutex<...>> wrapping and thus responsible for settling
-transactions.
+Main type keeping single *AccountState*
 
-**NOTE**: such thread safe wrapping might not be needed since we need to '*pin*' each client to a dedicated thread in
-order
-to process transactions in order.
+**NOTE**: non-thread safe assuming client must be '*pinned*' to a dedicated thread.
 
 #### AccountState
 
@@ -53,9 +50,9 @@ Helper module to read input file either all at once or stream row-by-row:
 
 + single-threaded: file read at once
 + multi-threaded: streamed row-by-row
-  **NOTE**: reading file at once will fail if unknown transaction type or wrong format encountered, it is not a problem
-  for
-  steaming approach since there each row parsed separately
+
+**NOTE**: reading file at once will fail if unknown transaction type or wrong format encountered, it is not a problem
+for steaming approach since there each row parsed separately.
 
 ## Test
 
@@ -75,7 +72,7 @@ plus test ensuring that multi-threaded mode gives the same results as single-thr
 
 ## Benchmark
 
-Interestingly single threaded mode shows better performance with large and small files.
+Single threaded mode still shows better performance with large and small files.
 
 Although there is a switch in the code which will use multi-threaded mode if input file size is more than **10 Mb**.
 

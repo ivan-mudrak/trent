@@ -4,14 +4,11 @@ use crate::types::{
 };
 use rust_decimal::Decimal;
 use serde::{Deserialize, Serialize};
-use std::{
-    collections::HashMap,
-    sync::{Arc, Mutex},
-};
+use std::collections::HashMap;
 
 #[derive(Clone, Debug)]
 pub struct Account {
-    pub state: Arc<Mutex<AccountState>>,
+    pub state: AccountState,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, Default)]
@@ -27,60 +24,55 @@ pub struct AccountState {
 impl Account {
     pub fn new() -> Self {
         Account {
-            state: Arc::new(Mutex::new(AccountState::default())),
+            state: AccountState::default(),
         }
     }
 
     pub fn try_settle_tx(&mut self, tx: Tx) -> Result<()> {
-        let mut state = self
-            .state
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner());
-
-        if state.locked {
+        if self.state.locked {
             return Err(ErrorKind::AccountBlocked.into());
         }
 
         match tx {
             Tx::Deposit { id, amount } => {
-                state.deposits.insert(id, amount);
-                state.available += amount;
-                state.total += amount;
+                self.state.deposits.insert(id, amount);
+                self.state.available += amount;
+                self.state.total += amount;
             }
             Tx::Withdrawal { amount, .. } => {
-                if state.available >= amount {
-                    state.available -= amount;
-                    state.total -= amount;
+                if self.state.available >= amount {
+                    self.state.available -= amount;
+                    self.state.total -= amount;
                 } else {
                     return Err(ErrorKind::NotEnoughFunds.into());
                 }
             }
             Tx::Dispute { id } => {
-                if state.active_disputes.contains_key(&id) {
+                if self.state.active_disputes.contains_key(&id) {
                     return Err(ErrorKind::TransactionAlreadyUnderDispute.into());
                 } else {
-                    if let Some(amount) = state.deposits.get(&id).copied() {
-                        state.active_disputes.insert(id, amount);
-                        state.available -= amount;
-                        state.held += amount;
+                    if let Some(amount) = self.state.deposits.get(&id).copied() {
+                        self.state.active_disputes.insert(id, amount);
+                        self.state.available -= amount;
+                        self.state.held += amount;
                     } else {
                         return Err(ErrorKind::NoneExistingTxRef(id).into());
                     }
                 }
             }
             Tx::Resolve { id } => {
-                if let Some(amount) = state.active_disputes.remove(&id) {
-                    state.available += amount;
-                    state.held -= amount;
+                if let Some(amount) = self.state.active_disputes.remove(&id) {
+                    self.state.available += amount;
+                    self.state.held -= amount;
                 } else {
                     return Err(ErrorKind::NoneExistingTxRef(id).into());
                 }
             }
             Tx::Chargeback { id } => {
-                if let Some(amount) = state.active_disputes.remove(&id) {
-                    state.total -= amount;
-                    state.held -= amount;
-                    state.locked = true;
+                if let Some(amount) = self.state.active_disputes.remove(&id) {
+                    self.state.total -= amount;
+                    self.state.held -= amount;
+                    self.state.locked = true;
                 } else {
                     return Err(ErrorKind::NoneExistingTxRef(id).into());
                 }

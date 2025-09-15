@@ -2,8 +2,9 @@ use crate::types::{
     client::{ClientId, ClientTx, Clients},
     error::Result,
 };
-use crossbeam_channel::{Receiver, Sender, bounded};
-use std::{collections::HashMap, thread::JoinHandle};
+use std::collections::HashMap;
+use tokio::sync::mpsc::{Receiver, Sender, channel};
+use tokio::task::JoinHandle;
 
 pub struct TxEngine {
     handles: Vec<JoinHandle<Clients>>,
@@ -33,7 +34,7 @@ impl TxEngine {
             let clients = Clients(HashMap::new());
 
             for _ in 0..num_threads {
-                let (tx, rx) = bounded::<Message>(1024);
+                let (tx, rx) = channel(1024);
                 senders.push(tx);
                 handles.push(Self::spawn_worker(rx));
             }
@@ -48,7 +49,7 @@ impl TxEngine {
         }
     }
 
-    pub fn process(&mut self, txs: Vec<ClientTx>) -> Result<()> {
+    pub async fn process(&mut self, txs: Vec<ClientTx>) -> Result<()> {
         if txs.is_empty() {
             return Ok(());
         };
@@ -61,7 +62,7 @@ impl TxEngine {
             for tx in txs {
                 // IMPORTANT: client pinned to a worker
                 let shard = Self::client_shard(tx.client_id, self.senders.len());
-                let _ = self.senders[shard].send(Message::Process(tx));
+                let _ = self.senders[shard].send(Message::Process(tx)).await;
             }
         }
 
@@ -73,27 +74,27 @@ impl TxEngine {
         (client_id as usize) % num_shards
     }
 
-    fn spawn_worker(rx: Receiver<Message>) -> JoinHandle<Clients> {
-        std::thread::spawn(move || {
+    fn spawn_worker(mut rx: Receiver<Message>) -> JoinHandle<Clients> {
+        tokio::task::spawn(async move {
             let mut clients = Clients(HashMap::new());
             loop {
-                match rx.recv() {
-                    Ok(Message::Process(tx)) => clients.process_tx(tx),
-                    Ok(Message::Shutdown) => break,
-                    Err(_) => break,
+                match rx.recv().await {
+                    Some(Message::Process(tx)) => clients.process_tx(tx),
+                    Some(Message::Shutdown) => break,
+                    None => break,
                 }
             }
             clients
         })
     }
 
-    pub fn flush(mut self) -> Result<Box<Clients>> {
+    pub async fn flush(mut self) -> Result<Box<Clients>> {
         for sender in self.senders {
-            let _ = sender.send(Message::Shutdown);
+            let _ = sender.send(Message::Shutdown).await;
         }
 
         for handle in self.handles {
-            match handle.join() {
+            match handle.await {
                 Ok(batch) => self.clients.0.extend(batch.0),
                 Err(_) => {
                     // TODO: log error

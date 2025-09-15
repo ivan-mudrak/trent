@@ -3,9 +3,12 @@ use crate::types::{
     client::{ClientTx, Clients},
     error::Result,
 };
-use crossbeam_channel::{Receiver, Sender, bounded};
 use dashmap::DashMap;
-use std::{sync::Arc, thread::JoinHandle};
+use std::sync::Arc;
+use tokio::{
+    sync::mpsc::{Receiver, Sender},
+    task::JoinHandle,
+};
 
 pub struct TxEngine {
     handles: Vec<JoinHandle<()>>,
@@ -35,7 +38,7 @@ impl TxEngine {
             let clients = Clients(Arc::new(DashMap::new()));
 
             for _ in 0..num_threads {
-                let (tx, rx) = bounded::<Message>(1024);
+                let (tx, rx) = tokio::sync::mpsc::channel(1024);
                 senders.push(tx);
                 handles.push(Self::spawn_worker(clients.clone(), rx));
             }
@@ -50,7 +53,7 @@ impl TxEngine {
         }
     }
 
-    pub fn process(&self, txs: Vec<ClientTx>) -> Result<()> {
+    pub async fn process(&self, txs: Vec<ClientTx>) -> Result<()> {
         if txs.is_empty() {
             return Ok(());
         };
@@ -63,7 +66,7 @@ impl TxEngine {
             for tx in txs {
                 // IMPORTANT: client pinned to a worker
                 let shard = Self::client_shard(tx.client_id, self.senders.len());
-                let _ = self.senders[shard].send(Message::Process(tx));
+                let _ = self.senders[shard].send(Message::Process(tx)).await;
             }
         }
 
@@ -75,9 +78,9 @@ impl TxEngine {
         (client_id as usize) % num_shards
     }
 
-    fn spawn_worker(clients: Clients, rx: Receiver<Message>) -> JoinHandle<()> {
-        std::thread::spawn(move || {
-            while let Ok(msg) = rx.recv() {
+    fn spawn_worker(clients: Clients, mut rx: Receiver<Message>) -> JoinHandle<()> {
+        tokio::spawn(async move {
+            while let Some(msg) = rx.recv().await {
                 match msg {
                     Message::Process(tx) => clients.process_tx(tx),
                     Message::Shutdown => break,
@@ -86,12 +89,12 @@ impl TxEngine {
         })
     }
 
-    pub fn flush(self) -> Result<Box<Clients>> {
+    pub async fn flush(self) -> Result<Box<Clients>> {
         for sender in self.senders {
-            let _ = sender.send(Message::Shutdown);
+            let _ = sender.send(Message::Shutdown).await;
         }
         for handle in self.handles {
-            let _ = handle.join();
+            let _ = handle.await;
         }
         Ok(Box::new(self.clients))
     }
